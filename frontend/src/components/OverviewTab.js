@@ -181,7 +181,7 @@ function OverviewTab({
   useEffect(() => {
     const fetchStoredData = async () => {
       try {
-        const response = await axios.get("http://localhost:5000/api/sensors/processed");
+        const response = await axios.get("http://projectdesign.onrender.com/api/sensors/processed");
         if (Array.isArray(response.data)) {
           setAllReadings(response.data);
         }
