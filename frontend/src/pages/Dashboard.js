@@ -43,8 +43,8 @@ function Dashboard() {
     const fetchData = async () => {
       try {
         const [processedRes, eventRes] = await Promise.all([
-          axios.get(`http://localhost:5000/api/sensor/processed?range=${range}`),
-          axios.get("http://localhost:5000/api/battery/events"),
+          axios.get(`http://projectdesign.onrender.com/api/sensor/processed?range=${range}`),
+          axios.get("http://projectdesign.onrender.com/api/battery/events"),
         ]);
 
         let data = processedRes.data || [];
