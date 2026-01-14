@@ -14,7 +14,6 @@ const app = express();
 // ---------- MIDDLEWARE SETUP ----------
 app.use(cors({
   origin: [
-    "http://localhost:3000", //This is for local development
     "https://project-design-orcin.vercel.app", //This is for the deployed frontend in Vercel
     "https://project-design-git-main-john-carlos-projects-1564928b.vercel.app/", //Another domain in vercel
     "project-design-cruw4cmaw-john-carlos-projects-1564928b.vercel.app" //Another domain in vercel
