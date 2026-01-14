@@ -12,7 +12,12 @@ import eventRoutes from "./routes/eventRoutes.js";
 const app = express();
 
 // ---------- MIDDLEWARE SETUP ----------
-app.use(cors({ origin: "http://localhost:3000" })); //Uncomment this if working on web app\
+app.use(cors({
+  origin: [
+    "http://localhost:3000", //This is for local development
+    "https://project-design-orcin.vercel.app" //This is for the deployed frontend in Vercel
+  ]
+}));
 //app.use(cors({ origin: "*" })); //This is for the mobile app
 app.use(express.json());
 
