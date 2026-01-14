@@ -30,7 +30,7 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
 
   const fetchBatteries = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/sensors/processed");
+      const res = await axios.get("http://projectdesign.onrender.com/api/sensors/processed");
       if (Array.isArray(res.data)) {
         // Extract unique batteries from data
         const unique = Array.from(
@@ -66,7 +66,7 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
     if (!selectedBattery) return;
     try {
       await axios.put(
-        `http://localhost:5000/api/sensors/batteries/${selectedBattery}`,
+        `http://projectdesign.onrender.com/api/sensors/batteries/${selectedBattery}`,
         {
           name: batteryName,
           rated_Ah: ratedAh,
