@@ -23,7 +23,7 @@ function LoginPage({ setIsAuthenticated }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post("http://projectdesign.onrender.com/api/users/login", form);
+      const res = await axios.post("https://projectdesign.onrender.com/api/users/login", form);
       if (res.data.success) {
         setIsAuthenticated(true);
         navigate("/dashboard");
