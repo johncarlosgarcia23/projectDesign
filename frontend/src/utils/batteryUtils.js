@@ -82,7 +82,7 @@ export const estimateAh = (battery) => {
 export const fetchBatteryForecast = async (batteryName) => {
   try {
     const res = await axios.get(
-      `http://https://projectdesign.onrender.com/api/forecast/battery?battery=${batteryName}`
+      `https://projectdesign.onrender.com/api/forecast/battery?battery=${batteryName}`
     );
     if (res.data && res.data.success) {
       return {
