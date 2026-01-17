@@ -15,10 +15,12 @@ const app = express();
 app.use(cors({
   origin: [
     "https://project-design-orcin.vercel.app", //This is for the deployed frontend in Vercel
-    "https://project-design-git-main-john-carlos-projects-1564928b.vercel.app/", //Another domain in vercel
-    "project-design-cruw4cmaw-john-carlos-projects-1564928b.vercel.app" //Another domain in vercel
-  ]
+    "https://project-design-git-main-john-carlos-projects-1564928b.vercel.app", //Another domain in vercel
+    "https://project-design-cruw4cmaw-john-carlos-projects-1564928b.vercel.app" //Another domain in vercel
+  ],
+  credentials: true
 }));
+
 //app.use(cors({ origin: "*" })); //This is for the mobile app
 app.use(express.json());
 
