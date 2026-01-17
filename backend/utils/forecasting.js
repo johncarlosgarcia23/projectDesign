@@ -1,42 +1,126 @@
+// forecasting.js
 import Reading from "../models/Reading.js";
 
-// Estimate remaining hours based on SoC and average discharge rate
-export const forecastSocDuration = (currentSoc, readings, batteryCapacityAh = 100) => {
-  if (!readings || readings.length < 2) return null;
+//Estimate remaining discharge time using recent energy flow
+//This uses Ah integration over time, not raw current
+export const forecastSocDuration = (
+  currentSoc,
+  readings,
+  ratedCapacityAh = 100,
+  windowHours = 2
+) => {
+  if (!readings || readings.length < 2 || currentSoc <= 0) return null;
 
-  const dischargeRates = readings
-    .map(r => r.current_A)
-    .filter(c => c < 0)
-    .map(c => Math.abs(c));
+  // Sort chronologically
+  const sorted = readings
+    .filter(r => r.batteryCurrent_A !== undefined)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-  const avgDischargeA = dischargeRates.length
-    ? dischargeRates.reduce((a, b) => a + b, 0) / dischargeRates.length
-    : 0;
+  const now = new Date(sorted.at(-1).timestamp);
+  const windowStart = new Date(now.getTime() - windowHours * 3600 * 1000);
 
-  if (avgDischargeA === 0) return Infinity;
+  // Use only recent discharge window
+  const windowed = sorted.filter(
+    r => new Date(r.timestamp) >= windowStart && r.batteryCurrent_A < 0
+  );
 
-  const remainingAh = (currentSoc / 100) * batteryCapacityAh;
-  const hoursLeft = remainingAh / avgDischargeA;
+  if (windowed.length < 2) return null;
 
-  return +hoursLeft.toFixed(2);
+  let dischargedAh = 0;
+
+  for (let i = 1; i < windowed.length; i++) {
+    const prev = windowed[i - 1];
+    const curr = windowed[i];
+
+    const dtHours =
+      (new Date(curr.timestamp) - new Date(prev.timestamp)) / 3.6e6;
+
+    const avgCurrent =
+      (Math.abs(prev.batteryCurrent_A) + Math.abs(curr.batteryCurrent_A)) / 2;
+
+    dischargedAh += avgCurrent * dtHours;
+  }
+
+  if (dischargedAh <= 0) return Infinity;
+
+  const effectiveRateA = dischargedAh / windowHours;
+  const remainingAh = (currentSoc / 100) * ratedCapacityAh;
+
+  return +(remainingAh / effectiveRateA).toFixed(2);
 };
 
-// Estimate SoH degradation rate (days until 0%)
-export const forecastSohLifetime = (sohHistory) => {
-  if (!sohHistory || sohHistory.length < 2) return null;
+//Estimate effective capacity ratio (capacity retention)
+export const estimateCapacityRetention = (
+  readings,
+  ratedCapacityAh = 100,
+  socDropThreshold = 10
+) => {
+  if (!readings || readings.length < 2) return null;
 
-  const sorted = sohHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const sorted = readings
+    .filter(r => r.batterySOC_pct !== undefined)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  let startIndex = null;
+  let endIndex = null;
+
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i].batterySOC_pct <= 100 - socDropThreshold) {
+      startIndex = i;
+      break;
+    }
+  }
+
+  if (startIndex === null) return null;
+
+  endIndex = sorted.length - 1;
+
+  let dischargedAh = 0;
+
+  for (let i = startIndex + 1; i <= endIndex; i++) {
+    const prev = sorted[i - 1];
+    const curr = sorted[i];
+
+    if (prev.batteryCurrent_A >= 0) continue;
+
+    const dtHours =
+      (new Date(curr.timestamp) - new Date(prev.timestamp)) / 3.6e6;
+
+    const avgCurrent =
+      (Math.abs(prev.batteryCurrent_A) + Math.abs(curr.batteryCurrent_A)) / 2;
+
+    dischargedAh += avgCurrent * dtHours;
+  }
+
+  const expectedAh = (socDropThreshold / 100) * ratedCapacityAh;
+
+  if (expectedAh <= 0) return null;
+
+  return +(dischargedAh / expectedAh).toFixed(3);
+};
+
+//Long-term degradation trend based on capacity retention history
+export const forecastCapacityFade = (capacityHistory) => {
+  if (!capacityHistory || capacityHistory.length < 2) return null;
+
+  const sorted = capacityHistory.sort(
+    (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+  );
+
   const first = sorted[0];
-  const last = sorted[sorted.length - 1];
-  const daysElapsed = (new Date(last.timestamp) - new Date(first.timestamp)) / (1000 * 60 * 60 * 24);
+  const last = sorted.at(-1);
+
+  const daysElapsed =
+    (new Date(last.timestamp) - new Date(first.timestamp)) / 8.64e7;
 
   if (daysElapsed <= 0) return null;
 
-  const sohDrop = first.soh_pct - last.soh_pct;
-  const ratePerDay = sohDrop / daysElapsed;
+  const drop = first.capacityRatio - last.capacityRatio;
 
-  if (ratePerDay <= 0) return Infinity;
+  if (drop <= 0) return Infinity;
 
-  const daysRemaining = last.soh_pct / ratePerDay;
-  return +daysRemaining.toFixed(2);
+  const dailyFade = drop / daysElapsed;
+  const remaining = last.capacityRatio / dailyFade;
+
+  return +remaining.toFixed(1); // days until effective capacity → zero
 };
