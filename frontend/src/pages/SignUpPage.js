@@ -37,7 +37,7 @@ function SignUpPage() {
 
     try {
       const res = await axios.post(
-        "http://projectdesign.onrender.com/api/users/register",
+        "https://projectdesign.onrender.com/api/users/register",
         form
       );
 
