@@ -37,8 +37,8 @@ function LogsTab() {
       try {
         const url =
           range === "today"
-            ? "http://projectdesign.onrender.com/api/processed-readings?range=today"
-            : "http://projectdesign.onrender.com/api/processed-readings";
+            ? "https://projectdesign.onrender.com/api/processed-readings?range=today"
+            : "https://projectdesign.onrender.com/api/processed-readings";
         const res = await axios.get(url);
         if (Array.isArray(res.data)) {
           setSensorData(res.data);
