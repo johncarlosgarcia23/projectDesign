@@ -2,7 +2,7 @@
 import express from "express";
 import cors from "cors";
 import { connectDB } from "./config/db.js";
-//import { startRawWatcher } from "./controllers/rawWatcher.js"; // <-- new import
+import { startRawWatcher } from "./controllers/rawWatcher.js"; // <-- new import
 import userRoutes from "./routes/userRoutes.js";
 import sensorRoutes from "./routes/sensorRoutes.js";
 import forecastRoutes from "./routes/forecastRoutes.js";
@@ -12,6 +12,7 @@ import eventRoutes from "./routes/eventRoutes.js";
 const app = express();
 
 // ---------- MIDDLEWARE SETUP ----------
+//app.use(cors({ origin: "http://localhost:3000" })); //Uncomment this if working on web app
 app.use(cors({
   origin: [
     "https://project-design-orcin.vercel.app", //This is for the deployed frontend in Vercel
@@ -27,7 +28,7 @@ app.use(express.json());
 // ---------- CONNECT TO MAIN MONGODB ----------
 connectDB().then(() => {
   console.log("Connected to main database (microgridDB)");
-//  startRawWatcher(); // <-- Start automatic raw-to-processed pipeline
+  startRawWatcher(); // <-- Start automatic raw-to-processed pipeline
 });
 
 // ---------- ROUTE CONFIGURATION ----------
