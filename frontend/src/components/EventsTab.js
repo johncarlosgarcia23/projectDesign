@@ -1,4 +1,4 @@
-// src/components/EventsTab.js
+// frontend/src/components/EventsTab.js
 import React, { useMemo } from "react";
 import {
   Typography,
