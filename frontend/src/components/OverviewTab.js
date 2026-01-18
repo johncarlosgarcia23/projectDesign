@@ -27,6 +27,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { getBatteryIcon, fetchBatteryForecast } from "../utils/batteryUtils";
+import { api } from "../utils/api";
 
 // ---------- CHART RENDERER FOR INDIVIDUAL BATTERY ----------
 const renderChart = (data) => (
@@ -170,9 +171,9 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
   const [selectedBattery, setSelectedBattery] = useState("");
   const [combinedData, setCombinedData] = useState([]);
   const [forecast, setForecast] = useState({
-    socHours: 0,
+    socHours: null,
     effectiveCapacityAh: null,
-    sohRelativePct: null,
+    capacityRetentionPct: null,
   });
 
   // ---------- FETCH ALL READINGS ----------
@@ -361,12 +362,15 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
                   }}
                 >
                   <Box sx={{ textAlign: "center" }}>
-                    <Typography variant="body2">SoH (stored)</Typography>
-                    <Typography variant="h6">
-                      {Number.isFinite(Number(latest.soh_pct))
-                        ? Number(latest.soh_pct).toFixed(1)
-                        : initialSoh || 100}
-                      %
+                    <Typography variant="body2" sx={{ color: "#666" }}>
+                      {Number.isFinite(forecast.capacityRetentionPct)
+                        ? `${forecast.capacityRetentionPct.toFixed(1)}% capacity`
+                        : "N/A"}
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "#666" }}>
+                      {Number.isFinite(forecast.effectiveCapacityAh)
+                        ? `${forecast.effectiveCapacityAh.toFixed(1)} Ah usable`
+                        : ""}
                     </Typography>
 
                     <Typography variant="body2" sx={{ color: "#666" }}>
