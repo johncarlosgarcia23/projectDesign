@@ -7,6 +7,7 @@ import OverviewTab from "../components/OverviewTab";
 import LogsTab from "../components/LogsTab";
 import EventsTab from "../components/EventsTab";
 import SettingsTab from "../components/SettingsTab";
+import { api } from "../utils/api";
 
 function Dashboard() {
   const [tab, setTab] = useState(0);
@@ -43,32 +44,17 @@ function Dashboard() {
     const fetchData = async () => {
       try {
         const [processedRes, eventRes] = await Promise.all([
-          axios.get(`https://projectdesign.onrender.com/api/sensor/processed?range=${range}`),
-          axios.get("https://projectdesign.onrender.com/api/battery/events"),
+          api.get(`/api/sensors/processed?range=${range}`),
+          api.get(`/api/events`),
         ]);
 
         let data = processedRes.data || [];
-
-        const now = new Date();
-        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const startOfYesterday = new Date(startOfToday);
-        startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-        const endOfYesterday = new Date(startOfToday);
-
-        if (range === "today") {
-          data = data.filter((d) => new Date(d.timestamp) >= startOfToday);
-        } else if (range === "yesterday") {
-          data = data.filter(
-            (d) =>
-              new Date(d.timestamp) >= startOfYesterday &&
-              new Date(d.timestamp) < endOfYesterday
-          );
-        }
+        // your backend already sorts/limits; client-side date filtering is fine
 
         setSensorData(data);
-        setEvents(eventRes.data);
+        setEvents(eventRes.data || []);
       } catch (err) {
-        console.error("Error fetching processed readings from microgridDB:", err);
+        console.error("Error fetching data:", err);
       }
     };
 
@@ -100,11 +86,10 @@ function Dashboard() {
           SoC:
             socAlgorithm === "ocv"
               ? a.soc_ocv ?? 0
-              : socAlgorithm === "cc"
-              ? a.soc_cc ?? 0
-              : a.soc_kf ?? 0,
+              : socAlgorithm === "coulomb"
+              ? a.soc_coulomb ?? 0
+              : a.soc_kalman ?? 0,
           SoH: a.soh_pct ?? 100,
-          Temp: a.temperature_C ?? 25,
         }))
     : [];
 
