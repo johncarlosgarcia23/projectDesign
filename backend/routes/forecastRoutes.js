@@ -1,8 +1,8 @@
 import express from "express";
-import { getForecastData } from "../controllers/forecastController.js";
+import { getBatteryForecast } from "../controllers/forecastController.js";
 
 const router = express.Router();
 
-router.get("/battery", getForecastData);
+router.get("/battery", getBatteryForecast);
 
 export default router;
