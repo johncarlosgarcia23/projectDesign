@@ -6,10 +6,19 @@ const router = express.Router();
 // Log new event
 router.post("/", async (req, res) => {
   try {
-    const { batteryName } = req.body;
-    if (!batteryName) return res.status(400).json({ error: "batteryName required" });
+    const { batteryId, type, message, timestamp } = req.body;
 
-    const event = await Event.create({ batteryName });
+    if (!batteryId || !type || !message) {
+      return res.status(400).json({ error: "batteryId, type, message required" });
+    }
+
+    const event = await Event.create({
+      batteryId,
+      type,
+      message,
+      timestamp: timestamp ? new Date(timestamp) : undefined,
+    });
+
     res.json(event);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -19,7 +28,9 @@ router.post("/", async (req, res) => {
 // Fetch all events
 router.get("/", async (req, res) => {
   try {
-    const events = await Event.find().sort({ connectedAt: -1 });
+    const { batteryId, limit = 200 } = req.query;
+    const q = batteryId ? { batteryId } : {};
+    const events = await Event.find(q).sort({ timestamp: -1 }).limit(Number(limit));
     res.json(events);
   } catch (err) {
     res.status(500).json({ error: err.message });
