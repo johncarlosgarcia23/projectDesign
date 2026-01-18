@@ -1,6 +1,4 @@
-// src/components/OverviewTab.js
 import React, { useMemo, useEffect, useState } from "react";
-//import axios from "axios";
 import {
   Typography,
   Grid,
@@ -28,6 +26,12 @@ import {
 } from "recharts";
 import { getBatteryIcon, fetchBatteryForecast } from "../utils/batteryUtils";
 import { api } from "../utils/api";
+
+const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+const num = (v, fallback = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
 
 // ---------- CHART RENDERER FOR INDIVIDUAL BATTERY ----------
 const renderChart = (data) => (
@@ -166,7 +170,7 @@ const renderCombinedChart = (combinedData, compareMode, batteryName) => {
 };
 
 // ---------- MAIN OVERVIEW COMPONENT ----------
-function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSoh }) {
+function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
   const [allReadings, setAllReadings] = useState([]);
   const [selectedBattery, setSelectedBattery] = useState("");
   const [combinedData, setCombinedData] = useState([]);
@@ -180,13 +184,8 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
   useEffect(() => {
     const fetchStoredData = async () => {
       try {
-        // correct route: /api/sensors/processed
         const response = await api.get("/api/sensors/processed");
-        if (Array.isArray(response.data)) {
-          setAllReadings(response.data);
-        } else {
-          setAllReadings([]);
-        }
+        setAllReadings(Array.isArray(response.data) ? response.data : []);
       } catch (err) {
         console.error("Error fetching processed readings:", err);
         setAllReadings([]);
@@ -226,47 +225,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
     setCombinedData(formatted);
   }, [filteredBatteryData, selectedBattery]);
 
-  // ---------- FORECAST POLLING ----------
-  useEffect(() => {
-    let mounted = true;
-    let id;
-
-    const updateForecast = async () => {
-      if (!selectedBattery) {
-        if (mounted) setForecast({ socHours: 0, effectiveCapacityAh: null, sohRelativePct: null });
-        return;
-      }
-      try {
-        // expect backend to return at least socHours; optionally effectiveCapacityAh + sohRelativePct
-        const res = await fetchBatteryForecast(selectedBattery);
-
-        // res might still be older shape {socHours, sohDays}; normalize safely
-        const normalized = {
-          socHours: Number.isFinite(Number(res.socHours)) ? Number(res.socHours) : 0,
-          effectiveCapacityAh: Number.isFinite(Number(res.effectiveCapacityAh))
-            ? Number(res.effectiveCapacityAh)
-            : null,
-          sohRelativePct: Number.isFinite(Number(res.sohRelativePct))
-            ? Number(res.sohRelativePct)
-            : null,
-        };
-
-        if (mounted) setForecast(normalized);
-      } catch (err) {
-        if (mounted) setForecast({ socHours: 0, effectiveCapacityAh: null, sohRelativePct: null });
-      }
-    };
-
-    updateForecast();
-    id = setInterval(updateForecast, 5000);
-
-    return () => {
-      mounted = false;
-      clearInterval(id);
-    };
-  }, [selectedBattery]);
-
-  // ---------- SOC SELECTION FUNCTION ----------
+  // ---------- SOC SELECTION ----------
   const getSelectedSoc = (entry) => {
     if (!entry) return 0;
     switch (socAlgorithm) {
@@ -281,6 +240,71 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
   };
 
   const latest = filteredBatteryData[filteredBatteryData.length - 1] || {};
+  const socPct = clamp(num(getSelectedSoc(latest), 0), 0, 100);
+
+  // ---------- FORECAST POLLING ----------
+  useEffect(() => {
+    let mounted = true;
+
+    const updateForecast = async () => {
+      if (!selectedBattery) {
+        if (mounted) {
+          setForecast({ socHours: null, effectiveCapacityAh: null, capacityRetentionPct: null });
+        }
+        return;
+      }
+
+      try {
+        const res = await fetchBatteryForecast(selectedBattery);
+
+        // batteryUtils now returns:
+        // { socHours, effectiveCapacityAh, capacityRetentionPct }
+        const normalized = {
+          socHours:
+            res.socHours === Infinity ? Infinity : (Number.isFinite(Number(res.socHours)) ? Number(res.socHours) : null),
+          effectiveCapacityAh: Number.isFinite(Number(res.effectiveCapacityAh))
+            ? Number(res.effectiveCapacityAh)
+            : null,
+          capacityRetentionPct: Number.isFinite(Number(res.capacityRetentionPct))
+            ? Number(res.capacityRetentionPct)
+            : null,
+        };
+
+        if (mounted) setForecast(normalized);
+      } catch (err) {
+        if (mounted) {
+          setForecast({ socHours: null, effectiveCapacityAh: null, capacityRetentionPct: null });
+        }
+      }
+    };
+
+    updateForecast();
+    const id = setInterval(updateForecast, 5000);
+
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, [selectedBattery]);
+
+  // ---------- DISPLAY COMPUTATIONS ----------
+  // If backend inferred usable capacity, use it. Else fall back to nominal 40Ah.
+  const usableCapacityAh = Number.isFinite(forecast.effectiveCapacityAh)
+    ? forecast.effectiveCapacityAh
+    : 40;
+
+  const remainingCapacityAh = (socPct / 100) * usableCapacityAh;
+
+  const remainingChargeLabel = `${socPct.toFixed(1)}%`;
+  const remainingTimeLabel =
+    forecast.socHours === Infinity
+      ? "Charging/Idle"
+      : Number.isFinite(forecast.socHours)
+      ? `${Math.max(0, Math.round(forecast.socHours))}h left`
+      : "—";
+
+  const remainingCapacityLabel = `${remainingCapacityAh.toFixed(1)} Ah`;
+  const usableCapacityLabel = `${usableCapacityAh.toFixed(1)} Ah`;
 
   return (
     <Box>
@@ -310,13 +334,13 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
         </FormControl>
       </Box>
 
-      {selectedBattery && latest && (
+      {selectedBattery && (
         <Grid container spacing={4} justifyContent="center">
           <Grid item xs={12} md={5}>
             <Card sx={{ background: "#fff", border: "2px solid #282C35", borderRadius: 3 }}>
               <CardContent sx={{ p: 4 }}>
                 <Box sx={{ display: "flex", justifyContent: "center", mb: 3 }}>
-                  {getBatteryIcon(getSelectedSoc(latest))}
+                  {getBatteryIcon(socPct)}
                 </Box>
 
                 <Typography variant="h5" sx={{ color: "#282C35", textAlign: "center" }}>
@@ -327,7 +351,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
                   variant="h2"
                   sx={{ color: "#282C35", textAlign: "center", fontWeight: "800" }}
                 >
-                  {Number(getSelectedSoc(latest)).toFixed(1)}%
+                  {socPct.toFixed(1)}%
                 </Typography>
 
                 <Typography variant="body1" sx={{ textAlign: "center", color: "#666" }}>
@@ -336,22 +360,19 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
 
                 <LinearProgress
                   variant="determinate"
-                  value={Math.max(0, Math.min(100, Number(getSelectedSoc(latest)) || 0))}
+                  value={socPct}
                   sx={{
                     height: 12,
                     borderRadius: 6,
                     bgcolor: "#e0e0e0",
                     "& .MuiLinearProgress-bar": {
                       background:
-                        getSelectedSoc(latest) > 60
-                          ? "#282C35"
-                          : getSelectedSoc(latest) > 30
-                          ? "#666666"
-                          : "#999999",
+                        socPct > 60 ? "#282C35" : socPct > 30 ? "#666666" : "#999999",
                     },
                   }}
                 />
 
+                {/* ---------- Bottom stats (fixed) ---------- */}
                 <Box
                   sx={{
                     display: "flex",
@@ -363,37 +384,26 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
                 >
                   <Box sx={{ textAlign: "center" }}>
                     <Typography variant="body2" sx={{ color: "#666" }}>
+                      Remaining capacity
+                    </Typography>
+                    <Typography variant="h6">{remainingCapacityLabel}</Typography>
+                    <Typography variant="body2" sx={{ color: "#666" }}>
+                      {`Usable: ${usableCapacityLabel}`}
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "#666" }}>
                       {Number.isFinite(forecast.capacityRetentionPct)
-                        ? `${forecast.capacityRetentionPct.toFixed(1)}% capacity`
-                        : "N/A"}
-                    </Typography>
-                    <Typography variant="body2" sx={{ color: "#666" }}>
-                      {Number.isFinite(forecast.effectiveCapacityAh)
-                        ? `${forecast.effectiveCapacityAh.toFixed(1)} Ah usable`
-                        : ""}
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ color: "#666" }}>
-                      {forecast.sohRelativePct == null
-                        ? "—"
-                        : `${Math.round(forecast.sohRelativePct)}% relative`}
+                        ? `${forecast.capacityRetentionPct.toFixed(1)}% retention`
+                        : "—"}
                     </Typography>
                   </Box>
 
                   <Box sx={{ textAlign: "center" }}>
-                    <Typography variant="body2">SoC (forecast)</Typography>
-                    <Typography variant="h6">
-                      {forecast.socHours === Infinity
-                        ? "Charging/Idle"
-                        : Number.isFinite(Number(forecast.socHours))
-                        ? `${Math.round(forecast.socHours)}h left`
-                        : "—"}
-                    </Typography>
-
                     <Typography variant="body2" sx={{ color: "#666" }}>
-                      {forecast.effectiveCapacityAh == null
-                        ? "—"
-                        : `${forecast.effectiveCapacityAh.toFixed(1)} Ah eff.`}
+                      Remaining charge
+                    </Typography>
+                    <Typography variant="h6">{remainingChargeLabel}</Typography>
+                    <Typography variant="body2" sx={{ color: "#666" }}>
+                      {remainingTimeLabel}
                     </Typography>
                   </Box>
                 </Box>
