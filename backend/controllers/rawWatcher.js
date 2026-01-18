@@ -1,18 +1,28 @@
 // controllers/rawWatcher.js
 import RawReading from "../models/RawReading.js";
 import Reading from "../models/Reading.js";
+import Battery from "../models/Battery.js";
 import { socOCV, socCoulomb } from "../utils/socAlgorithms.js";
+import { KalmanSOC } from "../utils/kalmanSOC.js";
 
-const DEFAULT_CAPACITY_AH = 40; // packaging / rated capacity used for coulomb counting
-const POLL_MS = 1500;
+const stateByBattery = new Map(); // batteryId -> { lastTs, lastSoc, kalman }
 
-// Track per-battery state instead of global
-const stateByBattery = new Map();
-// state: { lastSoc: number, lastTs: Date }
+function safeNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
 
-function clamp01(x) {
-  if (!Number.isFinite(x)) return 0;
-  return Math.max(0, Math.min(100, x));
+function safeDate(v) {
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+
+async function getBatteryConfig(batteryId) {
+  // optional config; if you don't have Battery model docs yet, defaults are used
+  const cfg = await Battery.findOne({ batteryName: batteryId }).lean().catch(() => null);
+  return {
+    rated_Ah: safeNum(cfg?.rated_Ah, 40),
+  };
 }
 
 export const startRawWatcher = () => {
@@ -20,42 +30,51 @@ export const startRawWatcher = () => {
 
   setInterval(async () => {
     try {
-      // get oldest raw reading first
       const raw = await RawReading.findOne().sort({ timestamp: 1 }).lean();
       if (!raw) return;
 
       const batteryId = raw.batteryId || "BATT_DEFAULT";
-      const voltage_V = Number(raw.voltage_V);
-      const current_A = Number(raw.current_A);
-      const timestamp = new Date(raw.timestamp);
+      const timestamp = safeDate(raw.timestamp);
 
-      if (!Number.isFinite(voltage_V) || !Number.isFinite(current_A) || Number.isNaN(timestamp.getTime())) {
-        // bad row: drop it so you don't block the queue
-        await RawReading.deleteOne({ _id: raw._id });
-        return;
+      const voltage_V = safeNum(raw.voltage_V);
+      const current_A = safeNum(raw.current_A); // schema is current_A
+
+      const st =
+        stateByBattery.get(batteryId) ||
+        ({
+          lastTs: timestamp,
+          lastSoc: 100,
+          kalman: null,
+          ratedAh: 40,
+        });
+
+      // load config once
+      if (!st.kalman) {
+        const cfg = await getBatteryConfig(batteryId);
+        st.ratedAh = cfg.rated_Ah;
+
+        st.kalman = new KalmanSOC({
+          capacityAh: st.ratedAh,
+          initialSOC: st.lastSoc,
+        });
       }
 
-      const prev = stateByBattery.get(batteryId) || { lastSoc: 100, lastTs: timestamp };
-      const dt_s = Math.max(1, (timestamp - new Date(prev.lastTs)) / 1000);
+      const dt_s = Math.max(1, (timestamp - st.lastTs) / 1000);
+      st.lastTs = timestamp;
 
       // SOC estimates
-      const soc_ocv = clamp01(socOCV(voltage_V));
+      const soc_ocv = safeNum(socOCV(voltage_V), 0);
+      const soc_coulomb = safeNum(socCoulomb(st.lastSoc, current_A, dt_s, st.ratedAh), st.lastSoc);
 
-      // socCoulomb signature may differ in your project.
-      // This call assumes: socCoulomb(previousSocPct, current_A_or_mA, dtSeconds, capacityAh?)
-      // If your socCoulomb expects mA, pass current_A*1000 instead.
-      let soc_coulomb = socCoulomb(prev.lastSoc, current_A * 1000, dt_s, DEFAULT_CAPACITY_AH);
-      soc_coulomb = clamp01(Number(soc_coulomb));
+      const k = st.kalman.update({ voltage_V, current_A, timestamp });
+      const soc_kalman = safeNum(k.soc, soc_coulomb);
 
-      // simple fused SOC (until you rely on KalmanSOC in sensorController pipeline)
-      const soc_kalman = clamp01((soc_ocv + soc_coulomb) / 2);
+      st.lastSoc = soc_kalman;
+      stateByBattery.set(batteryId, st);
 
-      // Derived quantities
-      const power_W = voltage_V * current_A;
-
-      // Estimate discharged Ah for this interval (only when discharging, current_A < 0)
-      const dischargedAhInterval =
-        current_A < 0 ? Math.abs(current_A) * (dt_s / 3600) : 0;
+      // power + Ah integration
+      const power_W = voltage_V * current_A; // will be negative while discharging
+      const dischargedAhThisStep = current_A < 0 ? Math.abs(current_A) * (dt_s / 3600) : 0;
 
       const processed = {
         timestamp,
@@ -63,27 +82,18 @@ export const startRawWatcher = () => {
         voltage_V,
         current_A,
         power_W,
-
-        // this is per-interval discharge Ah, not total capacity
-        estimated_Ah: dischargedAhInterval,
-
+        estimated_Ah: dischargedAhThisStep, // per-step discharged Ah (positive number)
         soc_ocv,
         soc_coulomb,
         soc_kalman,
-
-        // do NOT fake SoH; keep default/constant
-        soh_pct: 100
+        soh_pct: 100, // leave as 100 unless you have a real model
       };
 
       await Reading.create(processed);
       await RawReading.deleteOne({ _id: raw._id });
 
-      stateByBattery.set(batteryId, { lastSoc: soc_kalman, lastTs: timestamp });
-
-      // optional: reduce spam
-      // console.log("Processed →", batteryId, timestamp.toISOString());
     } catch (err) {
       console.error("Raw watcher loop error:", err);
     }
-  }, POLL_MS);
+  }, 1500);
 };
