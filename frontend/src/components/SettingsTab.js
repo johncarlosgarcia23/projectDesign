@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import { Settings, Logout } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
+import { api } from "../utils/api";
 
 function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
   const [batteries, setBatteries] = useState([]);
@@ -33,7 +34,7 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
 
   const fetchBatteries = async () => {
     try {
-      const res = await axios.get("https://projectdesign.onrender.com/api/sensors/processed");
+      const res = await api.get("/api/sensors/processed");
       if (Array.isArray(res.data)) {
         const uniqueIds = Array.from(
           new Set(res.data.map((r) => r.batteryId || r.batteryName).filter(Boolean))
