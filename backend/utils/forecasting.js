@@ -1,126 +1,193 @@
-// forecasting.js
-import Reading from "../models/Reading.js";
+// utils/forecasting.js
+// Provides:
+// - forecastRemainingHours(readings): hours until empty (based on recent discharge power/A draw)
+// - inferEffectiveCapacityAh(readings): estimates usable capacity (Ah) from discharge segments
+// - estimateRelativeSOH(effectiveAh, nominalAh): capacity% proxy (not true SOH)
 
-//Estimate remaining discharge time using recent energy flow
-//This uses Ah integration over time, not raw current
-export const forecastSocDuration = (
-  currentSoc,
+function toDate(v) {
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function n(v, fallback = 0) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : fallback;
+}
+
+// Extract discharge-only readings, oldest->newest
+function normalize(readings) {
+  const arr = Array.isArray(readings) ? readings : [];
+  const cleaned = arr
+    .map((r) => ({
+      timestamp: toDate(r.timestamp),
+      current_A: n(r.current_A, 0),
+      voltage_V: n(r.voltage_V, 0),
+      soc_kalman: r.soc_kalman ?? r.soc_pct ?? r.soc ?? null,
+      soc_ocv: r.soc_ocv ?? null,
+      soc_coulomb: r.soc_coulomb ?? null,
+    }))
+    .filter((r) => r.timestamp);
+
+  cleaned.sort((a, b) => a.timestamp - b.timestamp);
+  return cleaned;
+}
+
+// Forecast hours left using recent discharge rate.
+// Uses SOC% * nominalAh / avgDischargeA (simple, robust)
+// If current SOC isn't in readings, caller should pass it separately (controller can use latest.soc_kalman)
+export function forecastRemainingHours(
   readings,
-  ratedCapacityAh = 100,
-  windowHours = 2
-) => {
-  if (!readings || readings.length < 2 || currentSoc <= 0) return null;
+  {
+    currentSocPct = null,
+    nominalAh = 40,
+    windowMinutes = 30,
+    minPoints = 6,
+  } = {}
+) {
+  const data = normalize(readings);
+  if (data.length < 2) return null;
 
-  // Sort chronologically
-  const sorted = readings
-    .filter(r => r.batteryCurrent_A !== undefined)
-    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const latest = data[data.length - 1];
 
-  const now = new Date(sorted.at(-1).timestamp);
-  const windowStart = new Date(now.getTime() - windowHours * 3600 * 1000);
+  const soc =
+    currentSocPct ??
+    (latest.soc_kalman ?? latest.soc_ocv ?? latest.soc_coulomb);
 
-  // Use only recent discharge window
-  const windowed = sorted.filter(
-    r => new Date(r.timestamp) >= windowStart && r.batteryCurrent_A < 0
+  const socPct = n(soc, NaN);
+  if (!Number.isFinite(socPct) || socPct <= 0) return 0;
+
+  const windowStart = new Date(latest.timestamp.getTime() - windowMinutes * 60_000);
+
+  const windowed = data.filter(
+    (r) => r.timestamp >= windowStart && r.current_A < -0.05
   );
 
-  if (windowed.length < 2) return null;
+  if (windowed.length < minPoints) return null;
 
-  let dischargedAh = 0;
+  // Average discharge current magnitude
+  const mags = windowed.map((r) => Math.abs(r.current_A)).filter((x) => x > 0);
+  const avgA = mags.reduce((a, b) => a + b, 0) / mags.length;
 
-  for (let i = 1; i < windowed.length; i++) {
-    const prev = windowed[i - 1];
-    const curr = windowed[i];
+  if (!Number.isFinite(avgA) || avgA <= 0) return Infinity;
 
-    const dtHours =
-      (new Date(curr.timestamp) - new Date(prev.timestamp)) / 3.6e6;
+  const remainingAh = (socPct / 100) * nominalAh;
+  const hoursLeft = remainingAh / avgA;
 
-    const avgCurrent =
-      (Math.abs(prev.batteryCurrent_A) + Math.abs(curr.batteryCurrent_A)) / 2;
+  return Number.isFinite(hoursLeft) ? +hoursLeft.toFixed(2) : null;
+}
 
-    dischargedAh += avgCurrent * dtHours;
-  }
-
-  if (dischargedAh <= 0) return Infinity;
-
-  const effectiveRateA = dischargedAh / windowHours;
-  const remainingAh = (currentSoc / 100) * ratedCapacityAh;
-
-  return +(remainingAh / effectiveRateA).toFixed(2);
-};
-
-//Estimate effective capacity ratio (capacity retention)
-export const estimateCapacityRetention = (
+// Estimate effective capacity (Ah) from discharge segments by integrating current over time
+// across SOC drops. This gives usable capacity under observed load patterns.
+// Requires SOC% in readings (soc_kalman preferred). If SOC is flat/missing, returns null.
+export function inferEffectiveCapacityAh(
   readings,
-  ratedCapacityAh = 100,
-  socDropThreshold = 10
-) => {
-  if (!readings || readings.length < 2) return null;
+  {
+    socFieldPreference = ["soc_kalman", "soc_ocv", "soc_coulomb"],
+    minSocDropPct = 10,
+    minSegmentMinutes = 10,
+    currentThresholdA = -0.05,
+    maxLookbackHours = 48,
+  } = {}
+) {
+  const data = normalize(readings);
+  if (data.length < 2) return null;
 
-  const sorted = readings
-    .filter(r => r.batterySOC_pct !== undefined)
-    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  // choose SOC field dynamically per row
+  const withSoc = data
+    .map((r) => {
+      let soc = null;
+      for (const f of socFieldPreference) {
+        if (f === "soc_kalman" && r.soc_kalman != null) { soc = r.soc_kalman; break; }
+        if (f === "soc_ocv" && r.soc_ocv != null) { soc = r.soc_ocv; break; }
+        if (f === "soc_coulomb" && r.soc_coulomb != null) { soc = r.soc_coulomb; break; }
+      }
+      const socPct = n(soc, NaN);
+      return { ...r, socPct };
+    })
+    .filter((r) => Number.isFinite(r.socPct));
 
-  let startIndex = null;
-  let endIndex = null;
+  if (withSoc.length < 2) return null;
 
-  for (let i = 0; i < sorted.length; i++) {
-    if (sorted[i].batterySOC_pct <= 100 - socDropThreshold) {
-      startIndex = i;
-      break;
+  const latest = withSoc[withSoc.length - 1];
+  const cutoff = new Date(latest.timestamp.getTime() - maxLookbackHours * 3600_000);
+  const lookback = withSoc.filter((r) => r.timestamp >= cutoff);
+
+  // Find a discharge segment with enough SOC drop
+  // Strategy: scan forward and look for windows where SOC decreases by >= minSocDropPct
+  let best = null;
+
+  for (let i = 0; i < lookback.length - 1; i++) {
+    const start = lookback[i];
+    if (!Number.isFinite(start.socPct)) continue;
+
+    for (let j = i + 1; j < lookback.length; j++) {
+      const end = lookback[j];
+      const socDrop = start.socPct - end.socPct; // drop is positive when discharging
+      const dtMin = (end.timestamp - start.timestamp) / 60_000;
+
+      if (dtMin < minSegmentMinutes) continue;
+      if (socDrop < minSocDropPct) continue;
+
+      // Integrate Ah over [i..j] using trapezoid on discharge-only samples
+      let ah = 0;
+      for (let k = i + 1; k <= j; k++) {
+        const a = lookback[k - 1];
+        const b = lookback[k];
+
+        // consider only discharge; ignore charging intervals
+        const ia = a.current_A;
+        const ib = b.current_A;
+        if (!(ia < currentThresholdA || ib < currentThresholdA)) continue;
+
+        const dtH = (b.timestamp - a.timestamp) / 3_600_000;
+        const avgA = (Math.abs(Math.min(0, ia)) + Math.abs(Math.min(0, ib))) / 2;
+        ah += avgA * dtH;
+      }
+
+      if (!Number.isFinite(ah) || ah <= 0) continue;
+
+      // effective capacity estimate from this segment:
+      // capacity ≈ dischargedAh / (socDrop/100)
+      const cap = ah / (socDrop / 100);
+
+      const candidate = {
+        start: start.timestamp,
+        end: end.timestamp,
+        socDropPct: socDrop,
+        dischargedAh: ah,
+        effectiveCapacityAh: cap,
+      };
+
+      // pick the best by largest SOC drop (more reliable), then longest segment
+      if (
+        !best ||
+        candidate.socDropPct > best.socDropPct ||
+        (candidate.socDropPct === best.socDropPct &&
+          (candidate.end - candidate.start) > (best.end - best.start))
+      ) {
+        best = candidate;
+      }
     }
   }
 
-  if (startIndex === null) return null;
+  if (!best) return null;
 
-  endIndex = sorted.length - 1;
+  // clamp to something sane (optional)
+  const effectiveAh = best.effectiveCapacityAh;
+  if (!Number.isFinite(effectiveAh) || effectiveAh <= 0) return null;
 
-  let dischargedAh = 0;
+  return +effectiveAh.toFixed(2);
+}
 
-  for (let i = startIndex + 1; i <= endIndex; i++) {
-    const prev = sorted[i - 1];
-    const curr = sorted[i];
+// Capacity% proxy relative to nominal rating.
+// This is NOT true SOH; it is "capacity retention".
+export function estimateRelativeSOH(effectiveAh, nominalAh) {
+  const eff = n(effectiveAh, NaN);
+  const nom = n(nominalAh, NaN);
+  if (!Number.isFinite(eff) || !Number.isFinite(nom) || nom <= 0) return null;
 
-    if (prev.batteryCurrent_A >= 0) continue;
-
-    const dtHours =
-      (new Date(curr.timestamp) - new Date(prev.timestamp)) / 3.6e6;
-
-    const avgCurrent =
-      (Math.abs(prev.batteryCurrent_A) + Math.abs(curr.batteryCurrent_A)) / 2;
-
-    dischargedAh += avgCurrent * dtHours;
-  }
-
-  const expectedAh = (socDropThreshold / 100) * ratedCapacityAh;
-
-  if (expectedAh <= 0) return null;
-
-  return +(dischargedAh / expectedAh).toFixed(3);
-};
-
-//Long-term degradation trend based on capacity retention history
-export const forecastCapacityFade = (capacityHistory) => {
-  if (!capacityHistory || capacityHistory.length < 2) return null;
-
-  const sorted = capacityHistory.sort(
-    (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-  );
-
-  const first = sorted[0];
-  const last = sorted.at(-1);
-
-  const daysElapsed =
-    (new Date(last.timestamp) - new Date(first.timestamp)) / 8.64e7;
-
-  if (daysElapsed <= 0) return null;
-
-  const drop = first.capacityRatio - last.capacityRatio;
-
-  if (drop <= 0) return Infinity;
-
-  const dailyFade = drop / daysElapsed;
-  const remaining = last.capacityRatio / dailyFade;
-
-  return +remaining.toFixed(1); // days until effective capacity → zero
-};
+  const pct = (eff / nom) * 100;
+  // Keep in a sane range; real measurements can exceed nominal slightly
+  const clamped = Math.max(0, Math.min(120, pct));
+  return +clamped.toFixed(1);
+}
