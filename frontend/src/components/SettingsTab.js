@@ -1,4 +1,4 @@
-// SettingsTab.js
+// src/components/SettingsTab.js
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import {
@@ -23,7 +23,10 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
   const [ratedAh, setRatedAh] = useState(40);
   const navigate = useNavigate();
 
-  // ---------- FETCH BATTERIES FROM PROCESSED DATA ----------
+  // Backend route for saving battery settings is not confirmed to exist.
+  // This component will still show UI, but will block save until backend supports it.
+  const SETTINGS_ROUTE_EXISTS = false;
+
   useEffect(() => {
     fetchBatteries();
   }, []);
@@ -32,38 +35,47 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
     try {
       const res = await axios.get("https://projectdesign.onrender.com/api/sensors/processed");
       if (Array.isArray(res.data)) {
-        // Extract unique batteries from data
-        const unique = Array.from(
-          new Set(res.data.map((r) => r.batteryId || r.batteryName))
-        ).map((id) => ({
+        const uniqueIds = Array.from(
+          new Set(res.data.map((r) => r.batteryId || r.batteryName).filter(Boolean))
+        );
+
+        const unique = uniqueIds.map((id) => ({
           batteryId: id,
-          batteryName: id || "BATT_DEFAULT",
+          batteryName: id,
         }));
 
         setBatteries(unique);
+
         if (unique.length > 0) {
-          setSelectedBattery(unique[0].batteryId || unique[0].batteryName);
+          setSelectedBattery(unique[0].batteryId);
           setBatteryName(unique[0].batteryName);
         }
+      } else {
+        setBatteries([]);
       }
     } catch (error) {
-      console.error("Error fetching batteries from processed data:", error);
+      console.error("Error fetching batteries:", error);
+      setBatteries([]);
     }
   };
 
-  // ---------- HANDLE BATTERY SELECTION ----------
   const handleBatterySelect = (e) => {
     const id = e.target.value;
     setSelectedBattery(id);
-    const battery = batteries.find(
-      (b) => b.batteryId === id || b.batteryName === id
-    );
+    const battery = batteries.find((b) => b.batteryId === id);
     if (battery) setBatteryName(battery.batteryName);
   };
 
-  // ---------- SAVE SETTINGS ----------
   const handleSaveSettings = async () => {
     if (!selectedBattery) return;
+
+    if (!SETTINGS_ROUTE_EXISTS) {
+      alert(
+        "Save is disabled because the backend route for battery settings is not implemented yet. Add a PUT route in the backend first."
+      );
+      return;
+    }
+
     try {
       await axios.put(
         `https://projectdesign.onrender.com/api/sensors/batteries/${selectedBattery}`,
@@ -74,15 +86,15 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
           soc_algorithm: socAlgorithm,
         }
       );
+
       alert("Battery settings saved successfully.");
       fetchBatteries();
     } catch (error) {
       console.error("Error saving settings:", error);
-      alert("Failed to save settings. Check server logs.");
+      alert("Failed to save settings. Check backend logs.");
     }
   };
 
-  // ---------- LOGOUT HANDLER ----------
   const handleLogout = () => {
     localStorage.removeItem("user");
     sessionStorage.clear();
@@ -100,7 +112,6 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
         overflow: "hidden",
       }}
     >
-      {/* ---------- HEADER ---------- */}
       <Box
         sx={{
           p: 4,
@@ -120,10 +131,7 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
             <Settings sx={{ color: "#1e40af", fontSize: 28 }} />
           </Box>
           <Box>
-            <Typography
-              variant="h4"
-              sx={{ color: "#1e40af", fontWeight: "700", mb: 0.5 }}
-            >
+            <Typography variant="h4" sx={{ color: "#1e40af", fontWeight: "700", mb: 0.5 }}>
               System Configuration
             </Typography>
             <Typography variant="body1" sx={{ color: "#64748b" }}>
@@ -133,7 +141,6 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
         </Box>
       </Box>
 
-      {/* ---------- CONTENT ---------- */}
       <Box sx={{ p: 4 }}>
         <Typography variant="h6" sx={{ mb: 2, color: "#282C35" }}>
           Battery Selection
@@ -149,11 +156,8 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
             onChange={handleBatterySelect}
           >
             {batteries.map((b) => (
-              <MenuItem
-                key={b.batteryId || b.batteryName}
-                value={b.batteryId || b.batteryName}
-              >
-                {b.batteryName || "BATT_DEFAULT"}
+              <MenuItem key={b.batteryId} value={b.batteryId}>
+                {b.batteryName}
               </MenuItem>
             ))}
           </Select>
@@ -182,7 +186,7 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
         />
 
         <TextField
-          label="Initial SOH (%)"
+          label="Initial SoH (%)"
           variant="outlined"
           type="number"
           value={initialSOH}
@@ -194,6 +198,7 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
         <Typography variant="h6" sx={{ mb: 2, color: "#282C35" }}>
           SoC Estimation Algorithm
         </Typography>
+
         <FormControl sx={{ minWidth: 300, background: "white", mb: 4 }}>
           <InputLabel id="soc-algorithm-label">Select Algorithm</InputLabel>
           <Select
@@ -210,11 +215,7 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
         </FormControl>
 
         <Box sx={{ display: "flex", gap: 2 }}>
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={handleSaveSettings}
-          >
+          <Button variant="contained" color="primary" onClick={handleSaveSettings}>
             Save Changes
           </Button>
 
