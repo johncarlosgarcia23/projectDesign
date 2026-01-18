@@ -181,7 +181,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSo
     const fetchStoredData = async () => {
       try {
         // correct route: /api/sensors/processed
-        const response = await axios.get("https://projectdesign.onrender.com/api/sensors/processed");
+        const response = await api.get("/api/sensors/processed");
         if (Array.isArray(response.data)) {
           setAllReadings(response.data);
         } else {
