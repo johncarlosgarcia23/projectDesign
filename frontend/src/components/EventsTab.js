@@ -1,5 +1,5 @@
-//EventsTab.js
-import React from "react";
+// src/components/EventsTab.js
+import React, { useMemo } from "react";
 import {
   Typography,
   Paper,
@@ -13,6 +13,8 @@ import {
 import { Event } from "@mui/icons-material";
 
 function EventsTab({ events }) {
+  const safeEvents = useMemo(() => (Array.isArray(events) ? events : []), [events]);
+
   return (
     <Paper
       sx={{
@@ -43,10 +45,7 @@ function EventsTab({ events }) {
             <Event sx={{ color: "#dc2626", fontSize: 28 }} />
           </Box>
           <Box>
-            <Typography
-              variant="h4"
-              sx={{ color: "#1e40af", fontWeight: "700", mb: 0.5 }}
-            >
+            <Typography variant="h4" sx={{ color: "#1e40af", fontWeight: "700", mb: 0.5 }}>
               Event Logs
             </Typography>
             <Typography variant="body1" sx={{ color: "#64748b" }}>
@@ -55,6 +54,7 @@ function EventsTab({ events }) {
           </Box>
         </Box>
       </Box>
+
       <Box sx={{ p: 4 }}>
         <Table
           sx={{
@@ -62,12 +62,8 @@ function EventsTab({ events }) {
               background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
             },
             "& .MuiTableRow-root": {
-              "&:nth-of-type(even)": {
-                backgroundColor: "#f8fafc",
-              },
-              "&:hover": {
-                backgroundColor: "#f1f5f9",
-              },
+              "&:nth-of-type(even)": { backgroundColor: "#f8fafc" },
+              "&:hover": { backgroundColor: "#f1f5f9" },
             },
           }}
         >
@@ -111,16 +107,15 @@ function EventsTab({ events }) {
               </TableCell>
             </TableRow>
           </TableHead>
+
           <TableBody>
-            {events.length > 0 ? (
-              events.map((e, i) => (
-                <TableRow key={i}>
-                  <TableCell>
-                    {new Date(e.timestamp).toLocaleString()}
-                  </TableCell>
-                  <TableCell>{e.batteryId || "System"}</TableCell>
-                  <TableCell>{e.type}</TableCell>
-                  <TableCell>{e.message}</TableCell>
+            {safeEvents.length > 0 ? (
+              safeEvents.map((e, i) => (
+                <TableRow key={e._id || i}>
+                  <TableCell>{e.timestamp ? new Date(e.timestamp).toLocaleString() : "—"}</TableCell>
+                  <TableCell>{e.batteryId || e.batteryName || "System"}</TableCell>
+                  <TableCell>{e.type || "—"}</TableCell>
+                  <TableCell>{e.message || "—"}</TableCell>
                 </TableRow>
               ))
             ) : (
