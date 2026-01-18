@@ -37,8 +37,8 @@ function LogsTab() {
       try {
         const url =
           range === "today"
-            ? "https://projectdesign.onrender.com/api/processed-readings?range=today"
-            : "https://projectdesign.onrender.com/api/processed-readings";
+            ? "https://projectdesign.onrender.com/api/sensors/processed?range=today"
+            : "https://projectdesign.onrender.com/api/sensors/processed";
         const res = await axios.get(url);
         if (Array.isArray(res.data)) {
           setSensorData(res.data);
@@ -153,7 +153,7 @@ function LogsTab() {
                   { key: "current_A", label: "Current (A)" },
                   { key: "estimated_Ah", label: "Estimated Ah" },
                   { key: "soc_coulomb", label: "SoC (Coulomb)" },
-                  { key: "soc_voltage", label: "SoC (Voltage)" },
+                  { key: "soc_ocv", label: "SoC (OCV)" },
                   { key: "soc_kalman", label: "SoC (Kalman)" },
                   { key: "soh_pct", label: "SoH (%)" },
                 ].map((col) => (
@@ -185,7 +185,7 @@ function LogsTab() {
                     </TableCell>
                     <TableCell>{e.estimated_Ah?.toFixed(3) ?? "—"}</TableCell>
                     <TableCell>{e.soc_coulomb?.toFixed(2) ?? "—"}</TableCell>
-                    <TableCell>{e.soc_voltage?.toFixed(2) ?? "—"}</TableCell>
+                    <TableCell>{e.soc_ocv?.toFixed(2) ?? "—"}</TableCell>
                     <TableCell>{e.soc_kalman?.toFixed(2) ?? "—"}</TableCell>
                     <TableCell>{e.soh_pct?.toFixed(2) ?? "—"}</TableCell>
                   </TableRow>
