@@ -1,5 +1,5 @@
-// OverviewTab.js
-import React, { useState, useEffect } from "react";
+// src/components/OverviewTab.js
+import React, { useMemo, useEffect, useState } from "react";
 import axios from "axios";
 import {
   Typography,
@@ -26,11 +26,10 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { getBatteryIcon } from "../utils/batteryUtils";
-import { fetchBatteryForecast } from "../utils/batteryUtils";
+import { getBatteryIcon, fetchBatteryForecast } from "../utils/batteryUtils";
 
 // ---------- CHART RENDERER FOR INDIVIDUAL BATTERY ----------
-const renderChart = (data, color) => (
+const renderChart = (data) => (
   <ResponsiveContainer width="100%" height={320}>
     <LineChart
       data={(Array.isArray(data) ? data : []).map((d) => ({
@@ -166,50 +165,54 @@ const renderCombinedChart = (combinedData, compareMode, batteryName) => {
 };
 
 // ---------- MAIN OVERVIEW COMPONENT ----------
-function OverviewTab({
-  compareMode,
-  handleCompareChange,
-  socAlgorithm,
-  initialSoh,
-}) {
-  const [allReadings, setAllReadings] = useState([]); // stores all battery readings
-  const [selectedBattery, setSelectedBattery] = useState(""); // currently selected battery
-  const [combinedData, setCombinedData] = useState([]); // formatted for combined chart
-  const [forecast, setForecast] = useState({ socHours: 0, sohDays: 0 });
+function OverviewTab({ compareMode, handleCompareChange, socAlgorithm, initialSoh }) {
+  const [allReadings, setAllReadings] = useState([]);
+  const [selectedBattery, setSelectedBattery] = useState("");
+  const [combinedData, setCombinedData] = useState([]);
+  const [forecast, setForecast] = useState({
+    socHours: 0,
+    effectiveCapacityAh: null,
+    sohRelativePct: null,
+  });
 
   // ---------- FETCH ALL READINGS ----------
   useEffect(() => {
     const fetchStoredData = async () => {
       try {
+        // correct route: /api/sensors/processed
         const response = await axios.get("https://projectdesign.onrender.com/api/sensors/processed");
         if (Array.isArray(response.data)) {
           setAllReadings(response.data);
+        } else {
+          setAllReadings([]);
         }
       } catch (err) {
         console.error("Error fetching processed readings:", err);
+        setAllReadings([]);
       }
     };
+
     fetchStoredData();
     const interval = setInterval(fetchStoredData, 5000);
     return () => clearInterval(interval);
   }, []);
 
   // ---------- BATTERY LIST EXTRACTION ----------
-  const batteryList = Array.from(
-    new Set(allReadings.map((r) => r.batteryId || r.batteryName).filter(Boolean))
-  );
+  const batteryList = useMemo(() => {
+    return Array.from(
+      new Set(allReadings.map((r) => r.batteryId || r.batteryName).filter(Boolean))
+    );
+  }, [allReadings]);
 
-  // If no battery selected yet, default to first available
+  // default selected battery
   useEffect(() => {
-    if (!selectedBattery && batteryList.length) {
-      setSelectedBattery(batteryList[0]);
-    }
+    if (!selectedBattery && batteryList.length) setSelectedBattery(batteryList[0]);
   }, [batteryList, selectedBattery]);
 
   // ---------- FILTER SELECTED BATTERY ----------
-  const filteredBatteryData = allReadings.filter(
-    (r) => (r.batteryId || r.batteryName) === selectedBattery
-  );
+  const filteredBatteryData = useMemo(() => {
+    return allReadings.filter((r) => (r.batteryId || r.batteryName) === selectedBattery);
+  }, [allReadings, selectedBattery]);
 
   // ---------- FORMAT DATA FOR COMBINED CHART ----------
   useEffect(() => {
@@ -229,14 +232,27 @@ function OverviewTab({
 
     const updateForecast = async () => {
       if (!selectedBattery) {
-        if (mounted) setForecast({ socHours: 0, sohDays: 0 });
+        if (mounted) setForecast({ socHours: 0, effectiveCapacityAh: null, sohRelativePct: null });
         return;
       }
       try {
-        const result = await fetchBatteryForecast(selectedBattery);
-        if (mounted) setForecast(result);
+        // expect backend to return at least socHours; optionally effectiveCapacityAh + sohRelativePct
+        const res = await fetchBatteryForecast(selectedBattery);
+
+        // res might still be older shape {socHours, sohDays}; normalize safely
+        const normalized = {
+          socHours: Number.isFinite(Number(res.socHours)) ? Number(res.socHours) : 0,
+          effectiveCapacityAh: Number.isFinite(Number(res.effectiveCapacityAh))
+            ? Number(res.effectiveCapacityAh)
+            : null,
+          sohRelativePct: Number.isFinite(Number(res.sohRelativePct))
+            ? Number(res.sohRelativePct)
+            : null,
+        };
+
+        if (mounted) setForecast(normalized);
       } catch (err) {
-        if (mounted) setForecast({ socHours: 0, sohDays: 0 });
+        if (mounted) setForecast({ socHours: 0, effectiveCapacityAh: null, sohRelativePct: null });
       }
     };
 
@@ -254,21 +270,19 @@ function OverviewTab({
     if (!entry) return 0;
     switch (socAlgorithm) {
       case "ocv":
-        return entry.soc_ocv || entry.soc_pct || 0;
+        return entry.soc_ocv ?? entry.soc_pct ?? 0;
       case "coulomb":
-        return entry.soc_coulomb || entry.soc_pct || 0;
+        return entry.soc_coulomb ?? entry.soc_pct ?? 0;
       case "kalman":
       default:
-        return entry.soc_kalman || entry.soc_pct || 0;
+        return entry.soc_kalman ?? entry.soc_pct ?? 0;
     }
   };
 
   const latest = filteredBatteryData[filteredBatteryData.length - 1] || {};
 
-  // ---------- UI ----------
   return (
     <Box>
-      {/* ---------- TITLE SECTION ---------- */}
       <Box sx={{ mb: 4, textAlign: "center" }}>
         <Typography variant="h3" sx={{ color: "#282C35", fontWeight: "800", mb: 2 }}>
           Battery Data Overview
@@ -278,7 +292,6 @@ function OverviewTab({
         </Typography>
       </Box>
 
-      {/* ---------- BATTERY SELECTOR ---------- */}
       <Box sx={{ textAlign: "center", mb: 4 }}>
         <FormControl sx={{ minWidth: 220 }}>
           <InputLabel>Select Battery</InputLabel>
@@ -296,7 +309,6 @@ function OverviewTab({
         </FormControl>
       </Box>
 
-      {/* ---------- BATTERY STATUS CARD ---------- */}
       {selectedBattery && latest && (
         <Grid container spacing={4} justifyContent="center">
           <Grid item xs={12} md={5}>
@@ -305,21 +317,25 @@ function OverviewTab({
                 <Box sx={{ display: "flex", justifyContent: "center", mb: 3 }}>
                   {getBatteryIcon(getSelectedSoc(latest))}
                 </Box>
+
                 <Typography variant="h5" sx={{ color: "#282C35", textAlign: "center" }}>
                   {selectedBattery}
                 </Typography>
+
                 <Typography
                   variant="h2"
                   sx={{ color: "#282C35", textAlign: "center", fontWeight: "800" }}
                 >
-                  {getSelectedSoc(latest)?.toFixed(1)}%
+                  {Number(getSelectedSoc(latest)).toFixed(1)}%
                 </Typography>
+
                 <Typography variant="body1" sx={{ textAlign: "center", color: "#666" }}>
                   State of Charge
                 </Typography>
+
                 <LinearProgress
                   variant="determinate"
-                  value={getSelectedSoc(latest)}
+                  value={Math.max(0, Math.min(100, Number(getSelectedSoc(latest)) || 0))}
                   sx={{
                     height: 12,
                     borderRadius: 6,
@@ -335,7 +351,6 @@ function OverviewTab({
                   }}
                 />
 
-                {/* ---------- SoH & SoC forecast display (center aligned) ---------- */}
                 <Box
                   sx={{
                     display: "flex",
@@ -346,26 +361,35 @@ function OverviewTab({
                   }}
                 >
                   <Box sx={{ textAlign: "center" }}>
-                    <Typography variant="body2">SoH</Typography>
+                    <Typography variant="body2">SoH (stored)</Typography>
                     <Typography variant="h6">
-                      {latest.soh_pct?.toFixed(1) || initialSoh || 100}%
+                      {Number.isFinite(Number(latest.soh_pct))
+                        ? Number(latest.soh_pct).toFixed(1)
+                        : initialSoh || 100}
+                      %
                     </Typography>
+
                     <Typography variant="body2" sx={{ color: "#666" }}>
-                      {Number.isFinite(forecast.sohDays) ? `${Math.round(forecast.sohDays)}d left` : "N/A"}
+                      {forecast.sohRelativePct == null
+                        ? "—"
+                        : `${Math.round(forecast.sohRelativePct)}% relative`}
                     </Typography>
                   </Box>
 
                   <Box sx={{ textAlign: "center" }}>
-                    <Typography variant="body2">SoC</Typography>
+                    <Typography variant="body2">SoC (forecast)</Typography>
                     <Typography variant="h6">
-                      {getSelectedSoc(latest)?.toFixed(1)}%
-                    </Typography>
-                    <Typography variant="body2" sx={{ color: "#666" }}>
                       {forecast.socHours === Infinity
                         ? "Charging/Idle"
-                        : Number.isFinite(forecast.socHours)
+                        : Number.isFinite(Number(forecast.socHours))
                         ? `${Math.round(forecast.socHours)}h left`
-                        : "N/A"}
+                        : "—"}
+                    </Typography>
+
+                    <Typography variant="body2" sx={{ color: "#666" }}>
+                      {forecast.effectiveCapacityAh == null
+                        ? "—"
+                        : `${forecast.effectiveCapacityAh.toFixed(1)} Ah eff.`}
                     </Typography>
                   </Box>
                 </Box>
@@ -375,7 +399,6 @@ function OverviewTab({
         </Grid>
       )}
 
-      {/* ---------- BATTERY COMPARISON CHART ---------- */}
       {selectedBattery && (
         <Grid item xs={12} md={10} sx={{ width: "99%", mt: 6 }}>
           <Card>
@@ -387,23 +410,20 @@ function OverviewTab({
                     Battery Comparison
                   </Typography>
                 </Box>
-                <ToggleButtonGroup
-                  value={compareMode}
-                  exclusive
-                  onChange={handleCompareChange}
-                >
+
+                <ToggleButtonGroup value={compareMode} exclusive onChange={handleCompareChange}>
                   <ToggleButton value="voltage">Voltage</ToggleButton>
                   <ToggleButton value="current">Current</ToggleButton>
                   <ToggleButton value="both">Both</ToggleButton>
                 </ToggleButtonGroup>
               </Box>
+
               {renderCombinedChart(combinedData, compareMode, selectedBattery)}
             </CardContent>
           </Card>
         </Grid>
       )}
 
-      {/* ---------- DETAILED BATTERY CHART ---------- */}
       {selectedBattery && (
         <Grid container xs={12} md={10} sx={{ width: "99%", mt: 4 }}>
           <Grid item xs={12} md={10} sx={{ width: "99%", mt: 4 }}>
@@ -413,7 +433,7 @@ function OverviewTab({
                   {selectedBattery} - Detailed Chart
                 </Typography>
                 <Box sx={{ height: 320, width: "100%" }}>
-                  {renderChart(filteredBatteryData, "#1e40af")}
+                  {renderChart(filteredBatteryData)}
                 </Box>
               </CardContent>
             </Card>
