@@ -1,3 +1,4 @@
+// src/components/OverviewTab.js
 import React, { useMemo, useEffect, useState } from "react";
 import {
   Typography,
@@ -12,6 +13,7 @@ import {
   Select,
   FormControl,
   InputLabel,
+  Chip,
 } from "@mui/material";
 import { CompareArrows } from "@mui/icons-material";
 import {
@@ -32,6 +34,37 @@ const num = (v, fallback = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 };
+
+function inferModeFromCurrent(currentA) {
+  const eps = 0.05;
+  if (currentA > eps) return "CHARGING";
+  if (currentA < -eps) return "DISCHARGING";
+  return "IDLE";
+}
+
+function modeLabel(mode) {
+  switch (mode) {
+    case "CHARGING":
+      return "Charging";
+    case "DISCHARGING":
+      return "Discharging";
+    case "IDLE":
+    default:
+      return "Idle";
+  }
+}
+
+function consumptionLabel(mode, powerW) {
+  if (mode === "DISCHARGING") return `Consuming (${Math.abs(powerW).toFixed(1)} W)`;
+  if (mode === "CHARGING") return `Charging (+${Math.abs(powerW).toFixed(1)} W)`;
+  return "No energy flow";
+}
+
+function modeChipProps(mode) {
+  if (mode === "CHARGING") return { label: "Charging", color: "success", variant: "filled" };
+  if (mode === "DISCHARGING") return { label: "Discharging", color: "warning", variant: "filled" };
+  return { label: "Idle", color: "default", variant: "filled" };
+}
 
 // ---------- CHART RENDERER FOR INDIVIDUAL BATTERY ----------
 const renderChart = (data) => (
@@ -179,6 +212,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
     effectiveCapacityAh: null,
     capacityRetentionPct: null,
   });
+  const [latestEvent, setLatestEvent] = useState(null);
 
   // ---------- FETCH ALL READINGS ----------
   useEffect(() => {
@@ -242,6 +276,49 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
   const latest = filteredBatteryData[filteredBatteryData.length - 1] || {};
   const socPct = clamp(num(getSelectedSoc(latest), 0), 0, 100);
 
+  const currentA = num(latest.current_A, 0);
+  const voltageV = num(latest.voltage_V, 0);
+  const powerW = voltageV * currentA; // negative when discharging
+  const modeFromReading = inferModeFromCurrent(currentA);
+
+  // ---------- FETCH LATEST EVENT FOR SELECTED BATTERY ----------
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchLatestEvent = async () => {
+      if (!selectedBattery) {
+        if (mounted) setLatestEvent(null);
+        return;
+      }
+      try {
+        // returns newest first from your backend route
+        const res = await api.get(`/api/events?batteryId=${encodeURIComponent(selectedBattery)}&limit=1`);
+        const arr = Array.isArray(res.data) ? res.data : [];
+        if (mounted) setLatestEvent(arr[0] || null);
+      } catch (e) {
+        if (mounted) setLatestEvent(null);
+      }
+    };
+
+    fetchLatestEvent();
+    const id = setInterval(fetchLatestEvent, 5000);
+
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, [selectedBattery]);
+
+  // mode label preference: event type if present, else infer from current
+  const eventType = latestEvent?.type || null;
+  const mode =
+    eventType === "CHARGING" || eventType === "DISCHARGING" || eventType === "IDLE"
+      ? eventType
+      : modeFromReading;
+
+  const statusText = modeLabel(mode);
+  const energyText = consumptionLabel(mode, powerW);
+
   // ---------- FORECAST POLLING ----------
   useEffect(() => {
     let mounted = true;
@@ -257,11 +334,13 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
       try {
         const res = await fetchBatteryForecast(selectedBattery);
 
-        // batteryUtils now returns:
-        // { socHours, effectiveCapacityAh, capacityRetentionPct }
         const normalized = {
           socHours:
-            res.socHours === Infinity ? Infinity : (Number.isFinite(Number(res.socHours)) ? Number(res.socHours) : null),
+            res.socHours === Infinity
+              ? Infinity
+              : Number.isFinite(Number(res.socHours))
+              ? Number(res.socHours)
+              : null,
           effectiveCapacityAh: Number.isFinite(Number(res.effectiveCapacityAh))
             ? Number(res.effectiveCapacityAh)
             : null,
@@ -288,19 +367,18 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
   }, [selectedBattery]);
 
   // ---------- DISPLAY COMPUTATIONS ----------
-  // If backend inferred usable capacity, use it. Else fall back to nominal 40Ah.
-  const usableCapacityAh = Number.isFinite(forecast.effectiveCapacityAh)
-    ? forecast.effectiveCapacityAh
-    : 40;
-
+  const usableCapacityAh = Number.isFinite(forecast.effectiveCapacityAh) ? forecast.effectiveCapacityAh : 40;
   const remainingCapacityAh = (socPct / 100) * usableCapacityAh;
 
   const remainingChargeLabel = `${socPct.toFixed(1)}%`;
+
   const remainingTimeLabel =
     forecast.socHours === Infinity
       ? "Charging/Idle"
       : Number.isFinite(forecast.socHours)
       ? `${Math.max(0, Math.round(forecast.socHours))}h left`
+      : mode === "IDLE"
+      ? "Idle"
       : "—";
 
   const remainingCapacityLabel = `${remainingCapacityAh.toFixed(1)} Ah`;
@@ -339,7 +417,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
           <Grid item xs={12} md={5}>
             <Card sx={{ background: "#fff", border: "2px solid #282C35", borderRadius: 3 }}>
               <CardContent sx={{ p: 4 }}>
-                <Box sx={{ display: "flex", justifyContent: "center", mb: 3 }}>
+                <Box sx={{ display: "flex", justifyContent: "center", mb: 2 }}>
                   {getBatteryIcon(socPct)}
                 </Box>
 
@@ -366,23 +444,41 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
                     borderRadius: 6,
                     bgcolor: "#e0e0e0",
                     "& .MuiLinearProgress-bar": {
-                      background:
-                        socPct > 60 ? "#282C35" : socPct > 30 ? "#666666" : "#999999",
+                      background: socPct > 60 ? "#282C35" : socPct > 30 ? "#666666" : "#999999",
                     },
+                    mb: 2,
                   }}
                 />
 
-                {/* ---------- Bottom stats (fixed) ---------- */}
+                {/* Status + Energy flow */}
+                <Box sx={{ display: "flex", justifyContent: "center", gap: 1, mb: 2, flexWrap: "wrap" }}>
+                  <Chip {...modeChipProps(mode)} />
+                  <Chip
+                    label={energyText}
+                    variant="outlined"
+                    sx={{ borderColor: "#282C35", color: "#282C35" }}
+                  />
+                </Box>
+
+                {/* Optional: show latest event message (if exists) */}
+                <Box sx={{ textAlign: "center", mb: 1 }}>
+                  <Typography variant="body2" sx={{ color: "#666" }}>
+                    {latestEvent?.message ? latestEvent.message : `Status: ${statusText}`}
+                  </Typography>
+                </Box>
+
+                {/* Bottom stats */}
                 <Box
                   sx={{
                     display: "flex",
                     justifyContent: "center",
-                    mt: 3,
+                    mt: 2,
                     gap: 6,
                     alignItems: "center",
+                    flexWrap: "wrap",
                   }}
                 >
-                  <Box sx={{ textAlign: "center" }}>
+                  <Box sx={{ textAlign: "center", minWidth: 160 }}>
                     <Typography variant="body2" sx={{ color: "#666" }}>
                       Remaining capacity
                     </Typography>
@@ -397,7 +493,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
                     </Typography>
                   </Box>
 
-                  <Box sx={{ textAlign: "center" }}>
+                  <Box sx={{ textAlign: "center", minWidth: 160 }}>
                     <Typography variant="body2" sx={{ color: "#666" }}>
                       Remaining charge
                     </Typography>
@@ -417,7 +513,16 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
         <Grid item xs={12} md={10} sx={{ width: "99%", mt: 6 }}>
           <Card>
             <CardContent sx={{ height: 470, width: "100%", p: 4 }}>
-              <Box sx={{ display: "flex", justifyContent: "space-between", mb: 3 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  mb: 3,
+                  gap: 2,
+                  flexWrap: "wrap",
+                }}
+              >
                 <Box sx={{ display: "flex", alignItems: "center" }}>
                   <CompareArrows sx={{ color: "#1e40af", mr: 2 }} />
                   <Typography variant="h5" sx={{ color: "#1e40af", fontWeight: "700" }}>
@@ -425,11 +530,22 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
                   </Typography>
                 </Box>
 
-                <ToggleButtonGroup value={compareMode} exclusive onChange={handleCompareChange}>
-                  <ToggleButton value="voltage">Voltage</ToggleButton>
-                  <ToggleButton value="current">Current</ToggleButton>
-                  <ToggleButton value="both">Both</ToggleButton>
-                </ToggleButtonGroup>
+                {/* Move toggle group left by constraining width and adding right margin */}
+                <Box sx={{ display: "flex", justifyContent: "flex-end", flex: 1, pr: 4 }}>
+                  <ToggleButtonGroup
+                    value={compareMode}
+                    exclusive
+                    onChange={handleCompareChange}
+                    sx={{
+                      mr: 2,
+                      "& .MuiToggleButton-root": { px: 2, py: 0.8 },
+                    }}
+                  >
+                    <ToggleButton value="voltage">Voltage</ToggleButton>
+                    <ToggleButton value="current">Current</ToggleButton>
+                    <ToggleButton value="both">Both</ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
               </Box>
 
               {renderCombinedChart(combinedData, compareMode, selectedBattery)}
