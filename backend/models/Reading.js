@@ -10,13 +10,12 @@ const readingSchema = new mongoose.Schema(
     current_A: { type: Number, required: true },
     power_W: { type: Number, required: true },
 
-    estimated_Ah: { type: Number, default: 0 },
+    soc_ocv: { type: Number, default: null },
+    soc_coulomb: { type: Number, default: null },
+    soc_kalman: { type: Number, default: null },
 
-    soc_ocv: { type: Number, default: 0 },
-    soc_coulomb: { type: Number, default: 0 },
-    soc_kalman: { type: Number, default: 0 },
-
-    soh_pct: { type: Number, default: 100 }
+    effective_capacity_Ah: { type: Number, default: null }, // inferred
+    soh_relative_pct: { type: Number, default: null }       // trend-based
   },
   { collection: "processed_readings" }
 );
