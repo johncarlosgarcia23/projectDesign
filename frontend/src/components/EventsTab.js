@@ -25,10 +25,7 @@ const toCSV = (rows, columns) => {
   };
 
   const header = columns.map((c) => esc(c.label)).join(",");
-  const body = rows
-    .map((r) => columns.map((c) => esc(c.value(r))).join(","))
-    .join("\n");
-
+  const body = rows.map((r) => columns.map((c) => esc(c.value(r))).join(",")).join("\n");
   return `${header}\n${body}\n`;
 };
 
@@ -48,7 +45,9 @@ function EventsTab({ events }) {
   const safeEvents = useMemo(() => (Array.isArray(events) ? events : []), [events]);
   const [range, setRange] = useState("all");
 
-  const todayEvents = useMemo(() => {
+  const temperatureC = 25; // placeholder
+
+  const filtered = useMemo(() => {
     if (range !== "today") return safeEvents;
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -64,12 +63,13 @@ function EventsTab({ events }) {
       { label: "batteryId", value: (e) => e.batteryId || e.batteryName || "" },
       { label: "type", value: (e) => e.type || "" },
       { label: "message", value: (e) => e.message || "" },
+      { label: "temperature_C", value: () => temperatureC },
     ],
     []
   );
 
   const handleDownloadCSV = () => {
-    const csv = toCSV(todayEvents, columns);
+    const csv = toCSV(filtered, columns);
     const rng = range === "today" ? "TODAY" : "ALL";
     downloadTextFile(`events_${rng}.csv`, csv);
   };
@@ -115,12 +115,7 @@ function EventsTab({ events }) {
           </Box>
 
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-            <ToggleButtonGroup
-              value={range}
-              exclusive
-              onChange={(_, v) => v && setRange(v)}
-              size="small"
-            >
+            <ToggleButtonGroup value={range} exclusive onChange={(_, v) => v && setRange(v)} size="small">
               <ToggleButton value="today">Today</ToggleButton>
               <ToggleButton value="all">All Data</ToggleButton>
             </ToggleButtonGroup>
@@ -146,14 +141,10 @@ function EventsTab({ events }) {
         >
           <TableHead>
             <TableRow>
-              {["Timestamp", "Battery", "Event Type", "Message"].map((h) => (
+              {["Timestamp", "Battery", "Event Type", "Message", "Temp (°C)"].map((h) => (
                 <TableCell
                   key={h}
-                  sx={{
-                    fontWeight: "700",
-                    color: "#1e40af",
-                    borderBottom: "2px solid #cbd5e1",
-                  }}
+                  sx={{ fontWeight: "700", color: "#1e40af", borderBottom: "2px solid #cbd5e1" }}
                 >
                   {h}
                 </TableCell>
@@ -162,18 +153,19 @@ function EventsTab({ events }) {
           </TableHead>
 
           <TableBody>
-            {todayEvents.length > 0 ? (
-              todayEvents.map((e, i) => (
+            {filtered.length > 0 ? (
+              filtered.map((e, i) => (
                 <TableRow key={e._id || i}>
                   <TableCell>{e.timestamp ? new Date(e.timestamp).toLocaleString() : "—"}</TableCell>
                   <TableCell>{e.batteryId || e.batteryName || "System"}</TableCell>
                   <TableCell>{e.type || "—"}</TableCell>
                   <TableCell>{e.message || "—"}</TableCell>
+                  <TableCell>{temperatureC}</TableCell>
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={4} align="center">
+                <TableCell colSpan={5} align="center">
                   No events logged yet.
                 </TableCell>
               </TableRow>
