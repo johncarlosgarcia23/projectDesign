@@ -1,6 +1,5 @@
-// src/components/SettingsTab.js
+// frontend/src/components/SettingsTab.js
 import React, { useState, useEffect } from "react";
-import axios from "axios";
 import {
   Typography,
   Paper,
@@ -24,35 +23,42 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
   const [ratedAh, setRatedAh] = useState(40);
   const navigate = useNavigate();
 
-  // Backend route for saving battery settings is not confirmed to exist.
-  // This component will still show UI, but will block save until backend supports it.
-  const SETTINGS_ROUTE_EXISTS = false;
-
   useEffect(() => {
     fetchBatteries();
   }, []);
 
   const fetchBatteries = async () => {
     try {
-      const res = await api.get("/api/sensors/processed");
-      if (Array.isArray(res.data)) {
-        const uniqueIds = Array.from(
-          new Set(res.data.map((r) => r.batteryId || r.batteryName).filter(Boolean))
-        );
-
-        const unique = uniqueIds.map((id) => ({
-          batteryId: id,
-          batteryName: id,
-        }));
-
-        setBatteries(unique);
-
-        if (unique.length > 0) {
-          setSelectedBattery(unique[0].batteryId);
-          setBatteryName(unique[0].batteryName);
+      // Prefer backend battery config list if you add it; fallback to processed data
+      let res;
+      try {
+        res = await api.get("/api/sensors/batteries");
+        if (Array.isArray(res.data) && res.data.length) {
+          const mapped = res.data.map((b) => ({
+            batteryId: b.batteryId || b.batteryName,
+            batteryName: b.batteryName || b.batteryId,
+            rated_Ah: b.rated_Ah ?? 40,
+            user_set_soh_pct: b.user_set_soh_pct ?? 100,
+            soc_algorithm: b.soc_algorithm ?? "kalman",
+          }));
+          setBatteries(mapped);
+          setSelectedBattery(mapped[0].batteryId);
+          setBatteryName(mapped[0].batteryName);
+          setRatedAh(Number(mapped[0].rated_Ah ?? 40));
+          setInitialSOH(Number(mapped[0].user_set_soh_pct ?? 100));
+          return;
         }
-      } else {
-        setBatteries([]);
+      } catch (_) {}
+
+      res = await api.get("/api/sensors/processed");
+      const arr = Array.isArray(res.data) ? res.data : [];
+      const uniqueIds = Array.from(new Set(arr.map((r) => r.batteryId || r.batteryName).filter(Boolean)));
+      const unique = uniqueIds.map((id) => ({ batteryId: id, batteryName: id }));
+      setBatteries(unique);
+
+      if (unique.length > 0) {
+        setSelectedBattery(unique[0].batteryId);
+        setBatteryName(unique[0].batteryName);
       }
     } catch (error) {
       console.error("Error fetching batteries:", error);
@@ -63,30 +69,30 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
   const handleBatterySelect = (e) => {
     const id = e.target.value;
     setSelectedBattery(id);
-    const battery = batteries.find((b) => b.batteryId === id);
-    if (battery) setBatteryName(battery.batteryName);
+
+    const b = batteries.find((x) => x.batteryId === id);
+    if (b) {
+      setBatteryName(b.batteryName ?? id);
+      if (b.rated_Ah != null) setRatedAh(Number(b.rated_Ah));
+      if (b.user_set_soh_pct != null) setInitialSOH(Number(b.user_set_soh_pct));
+      if (b.soc_algorithm && b.soc_algorithm !== socAlgorithm) {
+        handleSocAlgorithmChange({ target: { value: b.soc_algorithm } });
+      }
+    } else {
+      setBatteryName(id);
+    }
   };
 
   const handleSaveSettings = async () => {
     if (!selectedBattery) return;
 
-    if (!SETTINGS_ROUTE_EXISTS) {
-      alert(
-        "Save is disabled because the backend route for battery settings is not implemented yet. Add a PUT route in the backend first."
-      );
-      return;
-    }
-
     try {
-      await axios.put(
-        `https://projectdesign.onrender.com/api/sensors/batteries/${selectedBattery}`,
-        {
-          name: batteryName,
-          rated_Ah: ratedAh,
-          user_set_soh_pct: initialSOH,
-          soc_algorithm: socAlgorithm,
-        }
-      );
+      await api.put(`/api/sensors/batteries/${encodeURIComponent(selectedBattery)}`, {
+        batteryName,
+        rated_Ah: Number(ratedAh),
+        user_set_soh_pct: Number(initialSOH),
+        soc_algorithm: socAlgorithm,
+      });
 
       alert("Battery settings saved successfully.");
       fetchBatteries();
@@ -220,12 +226,7 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
             Save Changes
           </Button>
 
-          <Button
-            variant="outlined"
-            color="error"
-            startIcon={<Logout />}
-            onClick={handleLogout}
-          >
+          <Button variant="outlined" color="error" startIcon={<Logout />} onClick={handleLogout}>
             Log Out
           </Button>
         </Box>
