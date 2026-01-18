@@ -12,45 +12,33 @@ import {
   CheckCircle,
 } from "@mui/icons-material";
 
-const num = (v, fallback = 0) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-};
-
 export const getBatteryStatus = (battery) => {
   if (!battery) return "Standby";
-  const current =
-    Number.isFinite(Number(battery.current_A))
-      ? Number(battery.current_A)
-      : Number.isFinite(Number(battery.current_mA))
-      ? Number(battery.current_mA) / 1000
-      : 0;
-
+  const current = battery.current_A ?? (battery.current_mA ? battery.current_mA / 1000 : 0) ?? 0;
   if (current > 0.5) return "Charging";
   if (current < -0.5) return "Supplying Load";
   return "Standby";
 };
 
 export const getBatteryIcon = (soc, color) => {
-  const s = num(soc, 0);
+  if (soc === undefined || soc === null) soc = 0;
   const iconColor =
     color ??
-    (s >= 80
+    (soc >= 80
       ? "#282C35"
-      : s >= 60
+      : soc >= 60
       ? "#333333"
-      : s >= 40
+      : soc >= 40
       ? "#666666"
-      : s >= 20
+      : soc >= 20
       ? "#999999"
       : "#cccccc");
-
   const sx = { fontSize: 40, color: iconColor };
 
-  if (s >= 80) return <Battery6Bar sx={sx} />;
-  if (s >= 60) return <Battery4Bar sx={sx} />;
-  if (s >= 40) return <Battery2Bar sx={sx} />;
-  if (s >= 20) return <Battery0Bar sx={sx} />;
+  if (soc >= 80) return <Battery6Bar sx={sx} />;
+  if (soc >= 60) return <Battery4Bar sx={sx} />;
+  if (soc >= 40) return <Battery2Bar sx={sx} />;
+  if (soc >= 20) return <Battery0Bar sx={sx} />;
   return <BatteryAlert sx={sx} />;
 };
 
@@ -67,36 +55,43 @@ export const getStatusIcon = (status) => {
 
 export const getBatterySoc = (battery, algorithm = "kalman") => {
   if (!battery) return 0;
-  if (algorithm === "ocv") return num(battery.soc_ocv ?? battery.soc_pct, 0);
-  if (algorithm === "coulomb") return num(battery.soc_coulomb ?? battery.soc_pct, 0);
-  return num(battery.soc_kalman ?? battery.soc_pct, 0);
+  switch (algorithm) {
+    case "ocv":
+      return battery.soc_ocv ?? battery.soc_pct ?? 0;
+    case "coulomb":
+      return battery.soc_coulomb ?? battery.soc_pct ?? 0;
+    case "kalman":
+    default:
+      return battery.soc_kalman ?? battery.soc_pct ?? 0;
+  }
 };
 
-// Remove estimateAh unless you actually compute/serve duration_s or delta_t.
-// Keeping it here but making it explicit:
-export const estimateAhFromWindow = (avgCurrentA, windowSeconds) => {
-  const I = num(avgCurrentA, 0);
-  const tH = num(windowSeconds, 0) / 3600;
-  return +(I * tH).toFixed(3);
+export const estimateAh = (battery) => {
+  if (!battery) return 0;
+  const current = battery.current_A ?? (battery.current_mA ? battery.current_mA / 1000 : 0) ?? 0;
+  const timeHours = (battery.duration_s ?? 0) / 3600;
+  return +(current * timeHours).toFixed(3);
 };
 
+// Forecast: uses your backend response keys
 export const fetchBatteryForecast = async (batteryName) => {
   try {
-    const res = await api.get(`/api/forecast/battery`, {
-      params: { battery: batteryName },
-    });
+    const res = await api.get(
+      `/api/forecast/battery`,
+      { params: { battery: batteryName } }
+    );
 
-    if (res.data?.success) {
+    if (res.data && res.data.success) {
       return {
-        socHours: Number.isFinite(Number(res.data.socHours)) ? Math.round(res.data.socHours) : 0,
-        // stop calling this "sohDays" unless backend truly returns a time-to-failure concept
-        // if backend returns capacity/sohRelativePct, reflect that instead
-        sohDays: Number.isFinite(Number(res.data.sohDays)) ? Math.round(res.data.sohDays) : 0,
+        socHours: res.data.socHours ?? null,
+        effectiveCapacityAh: res.data.effectiveCapacityAh ?? null,
+        capacityRetentionPct: res.data.capacityRetentionPct ?? null,
       };
     }
-    return { socHours: 0, sohDays: 0 };
+
+    return { socHours: null, effectiveCapacityAh: null, capacityRetentionPct: null };
   } catch (err) {
     console.error("Error fetching forecast:", err);
-    return { socHours: 0, sohDays: 0 };
+    return { socHours: null, effectiveCapacityAh: null, capacityRetentionPct: null };
   }
 };
