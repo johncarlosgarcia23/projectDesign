@@ -66,6 +66,18 @@ function modeChipProps(mode) {
   return { label: "Idle", color: "default", variant: "filled" };
 }
 
+function formatDurationFromHours(hours) {
+  if (!Number.isFinite(hours)) return "—";
+  if (hours <= 0) return "0m";
+
+  const totalMinutes = Math.round(hours * 60);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
 // ---------- CHART RENDERER FOR INDIVIDUAL BATTERY ----------
 const renderChart = (data) => (
   <ResponsiveContainer width="100%" height={320}>
@@ -162,10 +174,7 @@ const renderCombinedChart = (combinedData, compareMode, batteryName) => {
 
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <LineChart
-        data={safeCombined}
-        margin={{ top: 20, right: 50, left: 30, bottom: 30 }}
-      >
+      <LineChart data={safeCombined} margin={{ top: 20, right: 50, left: 30, bottom: 30 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
         <XAxis
           dataKey="time"
@@ -190,12 +199,7 @@ const renderCombinedChart = (combinedData, compareMode, batteryName) => {
             boxShadow: "0 4px 6px rgba(0,0,0,0.2)",
           }}
         />
-        <Legend
-          verticalAlign="bottom"
-          align="center"
-          layout="horizontal"
-          wrapperStyle={{ paddingTop: 20 }}
-        />
+        <Legend verticalAlign="bottom" align="center" layout="horizontal" wrapperStyle={{ paddingTop: 20 }} />
         {lines}
       </LineChart>
     </ResponsiveContainer>
@@ -213,6 +217,9 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
     capacityRetentionPct: null,
   });
   const [latestEvent, setLatestEvent] = useState(null);
+
+  // Placeholder temp
+  const temperatureC = 25;
 
   // ---------- FETCH ALL READINGS ----------
   useEffect(() => {
@@ -233,12 +240,9 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
 
   // ---------- BATTERY LIST EXTRACTION ----------
   const batteryList = useMemo(() => {
-    return Array.from(
-      new Set(allReadings.map((r) => r.batteryId || r.batteryName).filter(Boolean))
-    );
+    return Array.from(new Set(allReadings.map((r) => r.batteryId || r.batteryName).filter(Boolean)));
   }, [allReadings]);
 
-  // default selected battery
   useEffect(() => {
     if (!selectedBattery && batteryList.length) setSelectedBattery(batteryList[0]);
   }, [batteryList, selectedBattery]);
@@ -291,11 +295,12 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
         return;
       }
       try {
-        // returns newest first from your backend route
-        const res = await api.get(`/api/events?batteryId=${encodeURIComponent(selectedBattery)}&limit=1`);
+        const res = await api.get(
+          `/api/events?batteryId=${encodeURIComponent(selectedBattery)}&limit=1`
+        );
         const arr = Array.isArray(res.data) ? res.data : [];
         if (mounted) setLatestEvent(arr[0] || null);
-      } catch (e) {
+      } catch {
         if (mounted) setLatestEvent(null);
       }
     };
@@ -309,7 +314,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
     };
   }, [selectedBattery]);
 
-  // mode label preference: event type if present, else infer from current
+  // Prefer event type if it’s a mode event
   const eventType = latestEvent?.type || null;
   const mode =
     eventType === "CHARGING" || eventType === "DISCHARGING" || eventType === "IDLE"
@@ -325,9 +330,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
 
     const updateForecast = async () => {
       if (!selectedBattery) {
-        if (mounted) {
-          setForecast({ socHours: null, effectiveCapacityAh: null, capacityRetentionPct: null });
-        }
+        if (mounted) setForecast({ socHours: null, effectiveCapacityAh: null, capacityRetentionPct: null });
         return;
       }
 
@@ -350,10 +353,8 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
         };
 
         if (mounted) setForecast(normalized);
-      } catch (err) {
-        if (mounted) {
-          setForecast({ socHours: null, effectiveCapacityAh: null, capacityRetentionPct: null });
-        }
+      } catch {
+        if (mounted) setForecast({ socHours: null, effectiveCapacityAh: null, capacityRetentionPct: null });
       }
     };
 
@@ -370,13 +371,24 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
   const usableCapacityAh = Number.isFinite(forecast.effectiveCapacityAh) ? forecast.effectiveCapacityAh : 40;
   const remainingCapacityAh = (socPct / 100) * usableCapacityAh;
 
+  // time to deplete remaining capacity (Ah) using current discharge rate
+  const dischargeA = mode === "DISCHARGING" ? Math.max(0, Math.abs(currentA)) : 0;
+  const capHours =
+    dischargeA > 0 ? remainingCapacityAh / dischargeA : null; // hours
+  const remainingCapacityTimeLabel =
+    mode !== "DISCHARGING"
+      ? statusText
+      : Number.isFinite(capHours)
+      ? formatDurationFromHours(capHours)
+      : "—";
+
   const remainingChargeLabel = `${socPct.toFixed(1)}%`;
 
-  const remainingTimeLabel =
+  const remainingChargeTimeLabel =
     forecast.socHours === Infinity
       ? "Charging/Idle"
       : Number.isFinite(forecast.socHours)
-      ? `${Math.max(0, Math.round(forecast.socHours))}h left`
+      ? formatDurationFromHours(Math.max(0, forecast.socHours))
       : mode === "IDLE"
       ? "Idle"
       : "—";
@@ -425,10 +437,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
                   {selectedBattery}
                 </Typography>
 
-                <Typography
-                  variant="h2"
-                  sx={{ color: "#282C35", textAlign: "center", fontWeight: "800" }}
-                >
+                <Typography variant="h2" sx={{ color: "#282C35", textAlign: "center", fontWeight: "800" }}>
                   {socPct.toFixed(1)}%
                 </Typography>
 
@@ -450,24 +459,18 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
                   }}
                 />
 
-                {/* Status + Energy flow */}
                 <Box sx={{ display: "flex", justifyContent: "center", gap: 1, mb: 2, flexWrap: "wrap" }}>
                   <Chip {...modeChipProps(mode)} />
-                  <Chip
-                    label={energyText}
-                    variant="outlined"
-                    sx={{ borderColor: "#282C35", color: "#282C35" }}
-                  />
+                  <Chip label={energyText} variant="outlined" sx={{ borderColor: "#282C35", color: "#282C35" }} />
+                  <Chip label={`Temp: ${temperatureC}°C`} variant="outlined" sx={{ borderColor: "#282C35", color: "#282C35" }} />
                 </Box>
 
-                {/* Optional: show latest event message (if exists) */}
                 <Box sx={{ textAlign: "center", mb: 1 }}>
                   <Typography variant="body2" sx={{ color: "#666" }}>
                     {latestEvent?.message ? latestEvent.message : `Status: ${statusText}`}
                   </Typography>
                 </Box>
 
-                {/* Bottom stats */}
                 <Box
                   sx={{
                     display: "flex",
@@ -478,7 +481,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
                     flexWrap: "wrap",
                   }}
                 >
-                  <Box sx={{ textAlign: "center", minWidth: 160 }}>
+                  <Box sx={{ textAlign: "center", minWidth: 180 }}>
                     <Typography variant="body2" sx={{ color: "#666" }}>
                       Remaining capacity
                     </Typography>
@@ -491,15 +494,18 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
                         ? `${forecast.capacityRetentionPct.toFixed(1)}% retention`
                         : "—"}
                     </Typography>
+                    <Typography variant="body2" sx={{ color: "#666" }}>
+                      {`Depletes in: ${remainingCapacityTimeLabel}`}
+                    </Typography>
                   </Box>
 
-                  <Box sx={{ textAlign: "center", minWidth: 160 }}>
+                  <Box sx={{ textAlign: "center", minWidth: 180 }}>
                     <Typography variant="body2" sx={{ color: "#666" }}>
                       Remaining charge
                     </Typography>
                     <Typography variant="h6">{remainingChargeLabel}</Typography>
                     <Typography variant="body2" sx={{ color: "#666" }}>
-                      {remainingTimeLabel}
+                      {`Forecast: ${remainingChargeTimeLabel}`}
                     </Typography>
                   </Box>
                 </Box>
@@ -530,7 +536,6 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
                   </Typography>
                 </Box>
 
-                {/* Move toggle group left by constraining width and adding right margin */}
                 <Box sx={{ display: "flex", justifyContent: "flex-end", flex: 1, pr: 4 }}>
                   <ToggleButtonGroup
                     value={compareMode}
@@ -562,9 +567,7 @@ function OverviewTab({ compareMode, handleCompareChange, socAlgorithm }) {
                 <Typography variant="h5" sx={{ color: "#1e40af", fontWeight: "700", mb: 2 }}>
                   {selectedBattery} - Detailed Chart
                 </Typography>
-                <Box sx={{ height: 320, width: "100%" }}>
-                  {renderChart(filteredBatteryData)}
-                </Box>
+                <Box sx={{ height: 320, width: "100%" }}>{renderChart(filteredBatteryData)}</Box>
               </CardContent>
             </Card>
           </Grid>
