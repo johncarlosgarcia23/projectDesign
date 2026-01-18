@@ -1,35 +1,31 @@
+//forecastController.js
 import Reading from "../models/Reading.js";
-import { forecastSocDuration, forecastSohLifetime } from "../utils/forecasting.js";
+import {
+  forecastRemainingHours,
+  inferEffectiveCapacityAh,
+  estimateRelativeSOH
+} from "../utils/forecasting.js";
 
-export const getForecastData = async (req, res) => {
+export const getBatteryForecast = async (req, res) => {
   try {
-    const batteryName = req.query.battery || "Battery_A";
-    const recentReadings = await Reading.find({ batteryName })
+    const { battery } = req.query;
+
+    const readings = await Reading.find({ batteryId: battery })
       .sort({ timestamp: -1 })
-      .limit(1000);
+      .limit(300);
 
-    if (!recentReadings.length) {
-      return res.status(404).json({ message: "No readings found for forecast" });
-    }
-
-    const latest = recentReadings[0];
-    const soc = latest.soc_kf ?? latest.soc_cc ?? latest.soc_ocv ?? latest.soc_pct ?? 100;
-    const sohHistory = recentReadings.map(r => ({
-      timestamp: r.timestamp,
-      soh_pct: r.soh_pct ?? 100,
-    }));
-
-    const socHours = forecastSocDuration(soc, recentReadings);
-    const sohDays = forecastSohLifetime(sohHistory);
+    const hoursLeft = forecastRemainingHours(readings);
+    const effectiveAh = inferEffectiveCapacityAh(readings);
+    const nominalAh = 40; // packaging value
+    const soh = estimateRelativeSOH(effectiveAh, nominalAh);
 
     res.json({
       success: true,
-      battery: batteryName,
-      socHours,
-      sohDays,
+      socHours: hoursLeft,
+      effectiveCapacityAh: effectiveAh,
+      sohRelativePct: soh
     });
-  } catch (error) {
-    console.error("Error in getForecastData:", error);
-    res.status(500).json({ message: error.message });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
