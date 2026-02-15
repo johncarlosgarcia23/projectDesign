@@ -1,3 +1,4 @@
+//routes/forecastRoutes.js
 import express from "express";
 import { getBatteryForecast } from "../controllers/forecastController.js";
 
