@@ -202,24 +202,7 @@ function SettingsTab({ socAlgorithm, handleSocAlgorithmChange }) {
           inputProps={{ min: 0, max: 100 }}
         />
 
-        <Typography variant="h6" sx={{ mb: 2, color: "#282C35" }}>
-          SoC Estimation Algorithm
-        </Typography>
-
-        <FormControl sx={{ minWidth: 300, background: "white", mb: 4 }}>
-          <InputLabel id="soc-algorithm-label">Select Algorithm</InputLabel>
-          <Select
-            labelId="soc-algorithm-label"
-            id="soc-algorithm-select"
-            value={socAlgorithm}
-            label="SoC Estimation Algorithm"
-            onChange={handleSocAlgorithmChange}
-          >
-            <MenuItem value="kalman">Kalman Filter</MenuItem>
-            <MenuItem value="ocv">Open Circuit Voltage</MenuItem>
-            <MenuItem value="coulomb">Coulomb Counting</MenuItem>
-          </Select>
-        </FormControl>
+        
 
         <Box sx={{ display: "flex", gap: 2 }}>
           <Button variant="contained" color="primary" onClick={handleSaveSettings}>
